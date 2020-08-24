@@ -48,7 +48,7 @@ namespace Oxide.Plugins
 
         #region Cache
 
-        private class CacheSkin
+        class CacheSkin
         {
             public string Name;
             public string ItemName;
