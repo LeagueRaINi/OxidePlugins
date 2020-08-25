@@ -261,7 +261,7 @@ namespace Oxide.Plugins
 
             if (args.Length < 2)
             {
-                player.IPlayer.Reply($"Usage: {SKIN_CMD} <self|remote> <random|workshopId|remove>");
+                player.IPlayer.Reply($"Usage: {SKIN_CMD} <self|remote> <random|workshopId|clear>");
                 return;
             }
 
