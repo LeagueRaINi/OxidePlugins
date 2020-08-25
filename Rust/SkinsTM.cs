@@ -61,6 +61,8 @@ namespace Oxide.Plugins
         void Unload()
         {
             SaveSkinsToCache(FILE_SKIN_CACHE);
+
+            _settings.Save(FILE_USER_SETTINGS);
         }
 
         /// <summary>
@@ -138,6 +140,7 @@ namespace Oxide.Plugins
         class PlayerSettings
         {
             public bool RandomCraftingSkin;
+            public Dictionary<string, ulong> Skins = new Dictionary<string, ulong>();
         }
 
         class SettingsData
@@ -145,7 +148,7 @@ namespace Oxide.Plugins
             /// <summary>
             /// Our player settings dictionary
             /// </summary>
-            readonly Dictionary<ulong, PlayerSettings> _settings = new Dictionary<ulong, PlayerSettings>();
+            public readonly Dictionary<ulong, PlayerSettings> Settings = new Dictionary<ulong, PlayerSettings>();
 
             /// <summary>
             /// Loads and returns a settings instance
@@ -171,14 +174,14 @@ namespace Oxide.Plugins
                 {
                     PlayerSettings settings;
 
-                    if (!_settings.TryGetValue(id, out settings))
+                    if (!Settings.TryGetValue(id, out settings))
                     {
                         settings = new PlayerSettings
                         {
                             RandomCraftingSkin = false
                         };
 
-                        _settings.Add(id, settings);
+                        Settings.Add(id, settings);
                     }
 
                     return settings;
@@ -238,8 +241,10 @@ namespace Oxide.Plugins
                     return;
                 }
                 default:
+                {
                     player.IPlayer.Reply("Unknown command");
                     return;
+                }
             }
         }
 
@@ -256,7 +261,7 @@ namespace Oxide.Plugins
 
             if (args.Length < 2)
             {
-                player.IPlayer.Reply($"Usage: {SKIN_CMD} <self|remote> <random|workshopId>");
+                player.IPlayer.Reply($"Usage: {SKIN_CMD} <self|remote> <random|workshopId|remove>");
                 return;
             }
 
@@ -278,23 +283,38 @@ namespace Oxide.Plugins
                         return;
                     }
 
-                    if (args[1] == "random")
+                    switch (args[1])
                     {
-                        SetSkin(item, GetRandomElement(skins).WorkshopdId);
-                    }
-                    else
-                    {
-                        ulong workshopId = 0;
-
-                        if (!ulong.TryParse(args[1], out workshopId) || !skins.Any(x => x.WorkshopdId == workshopId))
+                        case "random":
                         {
-                            player.IPlayer.Reply("Could not parse workshop id or skin does not exist for this item");
+                            SetSkin(item, GetRandomElement(skins).WorkshopdId);
                             return;
                         }
+                        case "clear":
+                        {
+                            _settings[player.userID].Skins.Remove(skins.First().Skinnable.ItemName);
 
-                        SetSkin(item, workshopId);
+                            SetSkin(item, 0);
+
+                            return;
+                        }
+                        default:
+                        {
+                            ulong workshopId = 0;
+
+                            if (!ulong.TryParse(args[1], out workshopId) || !skins.Any(x => x.WorkshopdId == workshopId))
+                            {
+                                player.IPlayer.Reply("Could not parse workshop id or skin does not exist for this item");
+                                return;
+                            }
+
+                            _settings[player.userID].Skins[skins.First().Skinnable.ItemName] = workshopId;
+
+                            SetSkin(item, workshopId);
+
+                            return;
+                        }
                     }
-                    return;
                 }
                 case "remote":
                 {
@@ -326,27 +346,44 @@ namespace Oxide.Plugins
                         return;
                     }
 
-                    if (args[1] == "random")
+                    switch(args[1])
                     {
-                        SetSkin(entity, GetRandomElement(skins).WorkshopdId);
-                    }
-                    else
-                    {
-                        ulong workshopId = 0;
-
-                        if (!ulong.TryParse(args[1], out workshopId) || !skins.Any(x => x.WorkshopdId == workshopId))
+                        case "random":
                         {
-                            player.IPlayer.Reply("Could not parse workshop id or skin does not exist for this item");
+                            SetSkin(entity, GetRandomElement(skins).WorkshopdId);
                             return;
                         }
+                        case "clear":
+                        {
+                            _settings[player.userID].Skins.Remove(skins.First().Skinnable.ItemName);
 
-                        SetSkin(entity, workshopId);
+                            SetSkin(entity, 0);
+
+                            return;
+                        }
+                        default:
+                        {
+                            ulong workshopId = 0;
+
+                            if (!ulong.TryParse(args[1], out workshopId) || !skins.Any(x => x.WorkshopdId == workshopId))
+                            {
+                                player.IPlayer.Reply("Could not parse workshop id or skin does not exist for this item");
+                                return;
+                            }
+
+                            _settings[player.userID].Skins[skins.First().Skinnable.ItemName] = workshopId;
+
+                            SetSkin(entity, workshopId);
+
+                            return;
+                        }
                     }
-                    return;
                 }
                 default:
+                {
                     player.IPlayer.Reply("Unknown command");
                     return;
+                }
             }
         }
 
@@ -377,8 +414,10 @@ namespace Oxide.Plugins
                     return;
                 }
                 default:
+                {
                     player.IPlayer.Reply("Unknown setting");
                     return;
+                }
             }
         }
 
@@ -393,14 +432,29 @@ namespace Oxide.Plugins
         /// <param name="item">The crafted item.</param>
         void OnItemCraftFinished(ItemCraftTask task, Item item)
         {
-            if (!_settings[task.owner.userID].RandomCraftingSkin || !task.owner.IPlayer.HasPermission(PERM_USE))
+            if (!task.owner.IPlayer.HasPermission(PERM_USE))
                 return;
 
-            var skins = GetSkinsForItem(item.info.shortname);
-            if (skins == null)
-                return;
+            ulong skinId;
 
-            SetSkin(item, GetRandomElement(skins).WorkshopdId);
+            var userSettings = _settings[task.owner.userID];
+            if (userSettings.Skins.TryGetValue(item.info.shortname, out skinId))
+            {
+                //
+            }
+            else
+            {
+                if (!userSettings.RandomCraftingSkin)
+                    return;
+
+                var skins = GetSkinsForItem(item.info.shortname);
+                if (skins == null)
+                    return;
+
+                skinId = GetRandomElement(skins).WorkshopdId;
+            }
+
+            SetSkin(item, skinId);
         }
 
         #endregion
@@ -440,6 +494,35 @@ namespace Oxide.Plugins
         {
             if (string.IsNullOrEmpty(itemName))
                 return null;
+
+            if (itemName.EndsWith("deployed"))
+            {
+                switch(itemName)
+                {
+                    case "sleepingbag_leather_deployed":
+                    {
+                        itemName = "sleepingbag";
+                        break;
+                    }
+                    case "vendingmachine.deployed":
+                    {
+                        itemName = "vending.machine";
+                        break;
+                    }
+                    case "woodbox_deployed":
+                    {
+                        itemName = "box.wooden";
+                        break;
+                    }
+                    case "reactivetarget_deployed":
+                    {
+                        itemName = "target.reactive";
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
 
             var skinnable = Skinnable.FindForItem(itemName);
             if (skinnable == null)
