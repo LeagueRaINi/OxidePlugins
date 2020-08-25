@@ -10,10 +10,25 @@ using Random = Oxide.Core.Random;
 
 namespace Oxide.Plugins
 {
-    [Info("SkinsTM", "RaINi_", "1.0.0")]
+    [Info("SkinsTM", "RaINi_", "1.1.0")]
     [Description("Lets you change the skins of items and entities")]
     class SkinsTM : RustPlugin
     {
+        const string SKIN_CMD           = "skin";
+        const string PERM_CMD           = "skin_perm";
+        const string SKIN_SETTINGS_CMD  = "skin_setting";
+
+        const string PERM_USE           = "skinstm.use";
+        const string PERM_ADM           = "skinstm.adm";
+
+        const string FILE_SKIN_CACHE    = "SkinsTM_Cache";
+        const string FILE_USER_SETTINGS = "SkinsTM_UserSettings";
+
+        /// <summary>
+        /// Our plugins user settings instance
+        /// </summary>
+        readonly SettingsData _settings = SettingsData.Load(FILE_USER_SETTINGS);
+
         /// <summary>
         /// Initializes our plugin
         /// </summary>
@@ -26,16 +41,18 @@ namespace Oxide.Plugins
                 GameManifest.LoadAssets();
             }
 
-            LoadSkinsFromCache("SkinsTM");
-            
-            permission.RegisterPermission("skinstm.use", this);
-            permission.RegisterPermission("skinstm.adm", this);
+            LoadSkinsFromCache(FILE_SKIN_CACHE);
 
-            cmd.AddChatCommand("skin",      this, OnSkinCmd);
-            cmd.AddChatCommand("skin_perm", this, OnPermCmd);
+            permission.RegisterPermission(PERM_USE, this);
+            permission.RegisterPermission(PERM_ADM, this);
 
-            cmd.AddConsoleCommand("skin",      this, nameof(OnSkinCmdConsole));
-            cmd.AddConsoleCommand("skin_perm", this, nameof(OnPermCmdConsole));
+            cmd.AddChatCommand(SKIN_CMD,             this, OnSkinCmd);
+            cmd.AddChatCommand(PERM_CMD,             this, OnPermCmd);
+            cmd.AddChatCommand(SKIN_SETTINGS_CMD,    this, OnSkinSettingsCmd);
+
+            cmd.AddConsoleCommand(SKIN_CMD,          this, nameof(OnSkinCmdConsole));
+            cmd.AddConsoleCommand(PERM_CMD,          this, nameof(OnPermCmdConsole));
+            cmd.AddConsoleCommand(SKIN_SETTINGS_CMD, this, nameof(OnSkinSettingsCmdConsole));
         }
 
         /// <summary>
@@ -43,7 +60,15 @@ namespace Oxide.Plugins
         /// </summary>
         void Unload()
         {
-            SaveSkinsToCache("SkinsTM");
+            SaveSkinsToCache(FILE_SKIN_CACHE);
+        }
+
+        /// <summary>
+        /// Gets called whenever the server saves
+        /// </summary>
+        void OnServerSave()
+        {
+            timer.Once(Random.Range(60), () => _settings.Save(FILE_USER_SETTINGS));
         }
 
         #region Cache
@@ -93,7 +118,7 @@ namespace Oxide.Plugins
         {
             var skinCache = new List<CacheSkin>(Approved.All.Count);
 
-            foreach(var skin in Approved.All)
+            foreach (var skin in Approved.All)
             {
                 skinCache.Add(new CacheSkin
                 {
@@ -108,7 +133,59 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #region Config
+        #region Settings
+
+        class PlayerSettings
+        {
+            public bool RandomCraftingSkin;
+        }
+
+        class SettingsData
+        {
+            /// <summary>
+            /// Our player settings dictionary
+            /// </summary>
+            readonly Dictionary<ulong, PlayerSettings> _settings = new Dictionary<ulong, PlayerSettings>();
+
+            /// <summary>
+            /// Loads and returns a settings instance
+            /// </summary>
+            /// <param name="fileName">The settings file name.</param>
+            /// <returns></returns>
+            public static SettingsData Load(string fileName) => Interface.Oxide.DataFileSystem.ReadObject<SettingsData>(fileName);
+
+            /// <summary>
+            /// Saves the current settings instance
+            /// </summary>
+            /// <param name="fileName">The settings file name.</param>
+            public void Save(string fileName) => Interface.Oxide.DataFileSystem.WriteObject(fileName, this);
+
+            /// <summary>
+            /// Retrieves setting for a player with the given steam id
+            /// </summary>
+            /// <param name="id">The players steam id.</param>
+            /// <returns></returns>
+            public PlayerSettings this[ulong id]
+            {
+                get
+                {
+                    PlayerSettings settings;
+
+                    if (!_settings.TryGetValue(id, out settings))
+                    {
+                        settings = new PlayerSettings
+                        {
+                            RandomCraftingSkin = false
+                        };
+
+                        _settings.Add(id, settings);
+                    }
+
+                    return settings;
+                }
+            }
+        }
+
         #endregion
 
         #region Commands
@@ -121,12 +198,12 @@ namespace Oxide.Plugins
         /// <param name="args">The command arguments.</param>
         void OnPermCmd(BasePlayer player, string command, string[] args)
         {
-            if (!player.IPlayer.IsAdmin || !player.IPlayer.HasPermission("skinstm.adm"))
+            if (!player.IPlayer.IsAdmin || !player.IPlayer.HasPermission(PERM_ADM))
                 return;
 
             if (args.Length < 2)
             {
-                player.IPlayer.Reply("Usage: skin_perm <give|remove> <player name/id>");
+                player.IPlayer.Reply($"Usage: {PERM_CMD} <give|remove> <player name/id>");
                 return;
             }
 
@@ -144,19 +221,19 @@ namespace Oxide.Plugins
             {
                 case "add":
                 {
-                    if (target.IPlayer.HasPermission("skinstm.use"))
+                    if (target.IPlayer.HasPermission(PERM_USE))
                         return;
 
-                    target.IPlayer.GrantPermission("skinstm.use");
+                    target.IPlayer.GrantPermission(PERM_USE);
                     target.IPlayer.Reply("You have been granted skin permissions");
                     return;
                 }
                 case "remove":
                 {
-                    if (!target.IPlayer.HasPermission("skinstm.use"))
+                    if (!target.IPlayer.HasPermission(PERM_USE))
                         return;
 
-                    target.IPlayer.RevokePermission("skinstm.use");
+                    target.IPlayer.RevokePermission(PERM_USE);
                     target.IPlayer.Reply("Your skin permissions have been revoked");
                     return;
                 }
@@ -174,100 +251,158 @@ namespace Oxide.Plugins
         /// <param name="args">The command arguments.</param>
         void OnSkinCmd(BasePlayer player, string command, string[] args)
         {
-            if (!player.IPlayer.HasPermission("skinstm.use"))
+            if (!player.IPlayer.HasPermission(PERM_USE))
                 return;
 
             if (args.Length < 2)
             {
-                player.IPlayer.Reply("Usage: skin <self|remote> <random|workshopId>");
+                player.IPlayer.Reply($"Usage: {SKIN_CMD} <self|remote> <random|workshopId>");
                 return;
             }
 
-            if (args[0] == "self")
+            switch(args[0])
             {
-                var item = player.GetActiveItem();
-                if (item == null)
+                case "self":
                 {
-                    player.IPlayer.Reply("You are not holding any item");
-                    return;
-                }
-
-                var skins = GetSkinsForItem(item.info.shortname);
-                if (skins == null)
-                {
-                    player.IPlayer.Reply("Could not find any skin for this item");
-                    return;
-                }
-
-                if (args[1] == "random")
-                {
-                    SetSkin(item, skins.ElementAt(Random.Range(skins.Count())).WorkshopdId);
-                }
-                else
-                {
-                    ulong workshopId = 0;
-
-                    if (!ulong.TryParse(args[1], out workshopId) || !skins.Any(x => x.WorkshopdId == workshopId))
+                    var item = player.GetActiveItem();
+                    if (item == null)
                     {
-                        player.IPlayer.Reply("Could not parse workshop id or skin does not exist for this item");
+                        player.IPlayer.Reply("You are not holding any item");
                         return;
                     }
 
-                    SetSkin(item, workshopId);
+                    var skins = GetSkinsForItem(item.info.shortname);
+                    if (skins == null)
+                    {
+                        player.IPlayer.Reply("Could not find any skin for this item");
+                        return;
+                    }
+
+                    if (args[1] == "random")
+                    {
+                        SetSkin(item, GetRandomElement(skins).WorkshopdId);
+                    }
+                    else
+                    {
+                        ulong workshopId = 0;
+
+                        if (!ulong.TryParse(args[1], out workshopId) || !skins.Any(x => x.WorkshopdId == workshopId))
+                        {
+                            player.IPlayer.Reply("Could not parse workshop id or skin does not exist for this item");
+                            return;
+                        }
+
+                        SetSkin(item, workshopId);
+                    }
+                    return;
                 }
+                case "remote":
+                {
+                    RaycastHit rayHit;
+
+                    if (!Physics.Raycast(player.eyes.HeadRay(), out rayHit, 500f))
+                    {
+                        player.IPlayer.Reply("Raycast failed, make sure you are looking at a valid item and are within 500 units of it");
+                        return;
+                    }
+
+                    var entity = rayHit.GetEntity();
+                    if (entity == null)
+                    {
+                        player.IPlayer.Reply("Could not get entity from raycast");
+                        return;
+                    }
+
+                    if (entity.OwnerID != player.userID)
+                    {
+                        player.IPlayer.Reply("This entity was not build by you, you can only change the skins of entities you have build");
+                        return;
+                    }
+
+                    var skins = GetSkinsForItem(entity.ShortPrefabName);
+                    if (skins == null)
+                    {
+                        player.IPlayer.Reply("Could not find any skin for this entity");
+                        return;
+                    }
+
+                    if (args[1] == "random")
+                    {
+                        SetSkin(entity, GetRandomElement(skins).WorkshopdId);
+                    }
+                    else
+                    {
+                        ulong workshopId = 0;
+
+                        if (!ulong.TryParse(args[1], out workshopId) || !skins.Any(x => x.WorkshopdId == workshopId))
+                        {
+                            player.IPlayer.Reply("Could not parse workshop id or skin does not exist for this item");
+                            return;
+                        }
+
+                        SetSkin(entity, workshopId);
+                    }
+                    return;
+                }
+                default:
+                    player.IPlayer.Reply("Unknown command");
+                    return;
             }
-            else
+        }
+
+        /// <summary>
+        /// This method handles all the settings commands for our plugin
+        /// </summary>
+        /// <param name="player">The player that called the command.</param>
+        /// <param name="command">The command.</param>
+        /// <param name="args">The command arguments.</param>
+        void OnSkinSettingsCmd(BasePlayer player, string command, string[] args)
+        {
+            if (!player.IPlayer.HasPermission(PERM_USE))
+                return;
+
+            if (args.Length < 2)
             {
-                RaycastHit rayHit;
+                player.IPlayer.Reply($"Usage: {SKIN_SETTINGS_CMD} <setting> <value>");
+                return;
+            }
 
-                if (!Physics.Raycast(player.eyes.HeadRay(), out rayHit, 500f))
+            switch(args[0])
+            {
+                case "randomcraftingskin":
+                case "rcs":
                 {
-                    player.IPlayer.Reply("Raycast failed, make sure you are looking at a valid item and are within 500 units of it");
+                    if (!bool.TryParse(args[1], out _settings[player.userID].RandomCraftingSkin))
+                        player.IPlayer.Reply("Could not parse value");
                     return;
                 }
-
-                var entity = rayHit.GetEntity();
-                if (entity == null)
-                {
-                    player.IPlayer.Reply("Could not get entity from raycast");
+                default:
+                    player.IPlayer.Reply("Unknown setting");
                     return;
-                }
-
-                if (entity.OwnerID != player.userID)
-                {
-                    player.IPlayer.Reply("This entity was not build by you, you can only change the skins of entities you have build");
-                    return;
-                }
-
-                var skins = GetSkinsForItem(entity.ShortPrefabName);
-                if (skins == null)
-                {
-                    player.IPlayer.Reply("Could not find any skin for this entity");
-                    return;
-                }
-
-                if (args[1] == "random")
-                {
-                    SetSkin(entity, skins.ElementAt(Random.Range(skins.Count())).WorkshopdId);
-                }
-                else
-                {
-                    ulong workshopId = 0;
-
-                    if (!ulong.TryParse(args[1], out workshopId) || !skins.Any(x => x.WorkshopdId == workshopId))
-                    {
-                        player.IPlayer.Reply("Could not parse workshop id or skin does not exist for this item");
-                        return;
-                    }
-
-                    SetSkin(entity, workshopId);
-                }
             }
         }
 
         #endregion
 
         #region Hooks
+
+        /// <summary>
+        /// Gets called when a player finished crafting an item
+        /// </summary>
+        /// <param name="task">The item crafting task info.</param>
+        /// <param name="item">The crafted item.</param>
+        void OnItemCraftFinished(ItemCraftTask task, Item item)
+        {
+            if (!_settings[task.owner.userID].RandomCraftingSkin || !task.owner.IPlayer.HasPermission(PERM_USE))
+                return;
+
+            var skins = GetSkinsForItem(item.info.shortname);
+            if (skins == null)
+                return;
+
+            SetSkin(item, GetRandomElement(skins).WorkshopdId);
+        }
+
         #endregion
 
         #region Wrappers
@@ -283,6 +418,12 @@ namespace Oxide.Plugins
         /// </summary>
         /// <param name="arg">The console command arguments.</param>
         void OnPermCmdConsole(ConsoleSystem.Arg arg) => OnPermCmd(arg.Player(), string.Empty, arg.HasArgs() ? arg.Args : new string[] { });
+
+        /// <summary>
+        /// Console command wrapper for the skin command
+        /// </summary>
+        /// <param name="arg">The console command arguments.</param>
+        void OnSkinSettingsCmdConsole(ConsoleSystem.Arg arg) => OnSkinSettingsCmd(arg.Player(), string.Empty, arg.HasArgs() ? arg.Args : new string[] { });
 
         /// <summary>
         /// Adds a skin to the internal approved skins list
@@ -335,6 +476,24 @@ namespace Oxide.Plugins
         {
             entity.skinID = workshopId;
             entity.SendNetworkUpdate(BasePlayer.NetworkQueue.Update);
+        }
+
+        #endregion
+
+        #region Helpers
+
+        /// <summary>
+        /// Retrieves a random element from an enumerable list
+        /// </summary>
+        /// <typeparam name="T">The element type.</typeparam>
+        /// <param name="items">The items</param>
+        /// <returns></returns>
+        T GetRandomElement<T>(IEnumerable<T> items)
+        {
+            if (items == null || !items.Any())
+                throw new Exception($"Invalid items list");
+
+            return items.ElementAt(Random.Range(items.Count()));
         }
 
         #endregion
