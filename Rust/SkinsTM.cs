@@ -206,7 +206,7 @@ namespace Oxide.Plugins
 
             if (args.Length < 2)
             {
-                player.IPlayer.Reply($"Usage: {PERM_CMD} <give|remove> <player name/id>");
+                player.IPlayer.Reply($"Usage: {PERM_CMD} <give|remove> <playername|id>");
                 return;
             }
 
